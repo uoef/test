@@ -16,10 +16,6 @@ permissions:
   contents: read
   packages: write
 
-env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository_owner }}/ds2api
-
 jobs:
   mirror:
     runs-on: ubuntu-latest
@@ -34,42 +30,30 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - name: Install skopeo
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y skopeo
 
-      - name: Copy linux/amd64 + linux/arm64
+      - name: Copy image unchanged
         run: |
           set -euo pipefail
           SRC="${{ github.event.inputs.source_image }}"
           TAG="${{ github.event.inputs.target_tag }}"
-          DEST="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG}"
-          LATEST="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
+          DEST="ghcr.io/${{ github.repository_owner }}/ds2api:${TAG}"
+          LATEST="ghcr.io/${{ github.repository_owner }}/ds2api:latest"
 
           echo "source = ${SRC}"
           echo "dest   = ${DEST}"
 
-          mapfile -t REFS < <(
-            docker buildx imagetools inspect --raw "${SRC}" \
-              | jq -r --arg src "${SRC}" '
-                  .manifests[]
-                  | select(.platform.os == "linux")
-                  | select(.platform.architecture == "amd64" or .platform.architecture == "arm64")
-                  | "\($src)@" + .digest
-                '
-          )
+          # --all = 完整复制多架构清单，层内容不变
+          skopeo copy --all \
+            "docker://${SRC}" \
+            "docker://${DEST}"
 
-          if [ "${#REFS[@]}" -eq 0 ]; then
-            echo "没有解析到 linux/amd64 或 linux/arm64"
-            docker buildx imagetools inspect "${SRC}"
-            exit 1
-          fi
+          skopeo copy --all \
+            "docker://${DEST}" \
+            "docker://${LATEST}"
 
-          printf 'copying:\n'
-          printf '  %s\n' "${REFS[@]}"
-
-          docker buildx imagetools create \
-            --tag "${DEST}" \
-            --tag "${LATEST}" \
-            "${REFS[@]}"
-
-          docker buildx imagetools inspect "${DEST}"
+          echo "==== dest inspect ===="
+          skopeo inspect --raw "docker://${DEST}" | jq '{schemaVersion,mediaType,manifests:[.manifests[]?|{digest,platform}]}'
