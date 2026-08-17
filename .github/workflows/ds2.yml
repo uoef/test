@@ -1,7 +1,25 @@
-name: Build ds2api
+name: Build image
 
 on:
   workflow_dispatch:
+    inputs:
+      source_image:
+        description: 源镜像（完整地址）
+        required: true
+        default: ghcr.io/ouqiting/ds2api:v3.7.0
+      image_name:
+        description: 推到 GHCR 的名称（留空=用当前仓库名）
+        required: false
+        default: ""
+      version:
+        description: 版本号（会一直保留）
+        required: true
+        default: v3.7.0
+      update_latest:
+        description: 同时更新 latest 标签
+        required: true
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -17,12 +35,44 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set image names
+        id: meta
+        run: |
+          set -euo pipefail
+
+          NAME="${{ github.event.inputs.image_name }}"
+          if [ -z "${NAME}" ]; then
+            NAME="${{ github.event.repository.name }}"
+          fi
+          NAME="$(echo "${NAME}" | tr '[:upper:]' '[:lower:]')"
+
+          VERSION="${{ github.event.inputs.version }}"
+          OWNER="${{ github.repository_owner }}"
+          BASE="ghcr.io/${OWNER}/${NAME}"
+          RUN_TAG="${VERSION}-run.${{ github.run_number }}"
+
+          {
+            echo "name=${NAME}"
+            echo "base=${BASE}"
+            echo "version=${VERSION}"
+            echo "run_tag=${RUN_TAG}"
+          } >> "${GITHUB_OUTPUT}"
+
+          echo "包名     : ${NAME}"
+          echo "版本     : ${VERSION}"
+          echo "本次保留 : ${BASE}:${RUN_TAG}"
+          echo "版本标签 : ${BASE}:${VERSION}"
+          echo "latest   : ${{ github.event.inputs.update_latest }}"
+
       - name: Login GHCR
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -33,6 +83,9 @@ jobs:
           context: .
           push: true
           platforms: linux/amd64,linux/arm64
+          build-args: |
+            SOURCE_IMAGE=${{ github.event.inputs.source_image }}
           tags: |
-            ghcr.io/${{ github.repository }}:v3.7.0
-            ghcr.io/${{ github.repository }}:latest
+            ${{ steps.meta.outputs.base }}:${{ steps.meta.outputs.version }}
+            ${{ steps.meta.outputs.base }}:${{ steps.meta.outputs.run_tag }}
+            ${{ github.event.inputs.update_latest == 'true' && format('{0}:latest', steps.meta.outputs.base) || '' }}
