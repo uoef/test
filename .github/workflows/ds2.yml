@@ -4,19 +4,19 @@ on:
   workflow_dispatch:
     inputs:
       source_image:
-        description: 源镜像
+        description: "Source image"
         required: true
-        default: ghcr.io/ouqiting/ds2api:v3.7.0
+        default: "ghcr.io/ouqiting/ds2api:v3.7.0"
       image_name:
-        description: 镜像名（留空=仓库名。填别的名字需要仓库 Secret: GHCR_TOKEN）
+        description: "Image name. Leave empty to use the repo name."
         required: false
         default: ""
       version:
-        description: 版本号（每次都会保留）
+        description: "Version tag to keep"
         required: true
-        default: v3.7.0
+        default: "v3.7.0"
       update_latest:
-        description: 同时更新 latest
+        description: "Also update latest"
         required: true
         type: boolean
         default: true
@@ -38,17 +38,17 @@ jobs:
       - name: Resolve names
         id: meta
         env:
-          INPUT_NAME: ${{ github.event.inputs.image_name }}
-          INPUT_VERSION: ${{ github.event.inputs.version }}
+          INPUT_NAME: ${{ inputs.image_name }}
+          INPUT_VERSION: ${{ inputs.version }}
           REPO_NAME: ${{ github.event.repository.name }}
           OWNER: ${{ github.repository_owner }}
           HAS_TOKEN: ${{ secrets.GHCR_TOKEN != '' }}
         run: |
           set -euo pipefail
 
-          NAME="$(echo "${INPUT_NAME}" | tr '[:upper:]' '[:lower:]' | xargs)"
-          REPO="$(echo "${REPO_NAME}" | tr '[:upper:]' '[:lower:]')"
-          OWNER="$(echo "${OWNER}" | tr '[:upper:]' '[:lower:]')"
+          NAME="$(printf '%s' "${INPUT_NAME}" | tr '[:upper:]' '[:lower:]' | xargs || true)"
+          REPO="$(printf '%s' "${REPO_NAME}" | tr '[:upper:]' '[:lower:]')"
+          OWNER="$(printf '%s' "${OWNER}" | tr '[:upper:]' '[:lower:]')"
           VERSION="${INPUT_VERSION}"
           RUN_TAG="${VERSION}-run.${GITHUB_RUN_NUMBER}"
 
@@ -57,9 +57,8 @@ jobs:
           fi
 
           if [ "${NAME}" != "${REPO}" ] && [ "${HAS_TOKEN}" != "true" ]; then
-            echo "::error::当前仓库是 ${OWNER}/${REPO}，不能用 GITHUB_TOKEN 推 ghcr.io/${OWNER}/${NAME}"
-            echo "::error::名称请留空（得到 ghcr.io/${OWNER}/${REPO}:${VERSION}）"
-            echo "::error::或者把仓库改名为 ${NAME}，或者在 Settings → Secrets 里加 GHCR_TOKEN"
+            echo "::error::Current repo is ${OWNER}/${REPO}, GITHUB_TOKEN cannot push ghcr.io/${OWNER}/${NAME}"
+            echo "::error::Leave image_name empty, rename the repo, or add secret GHCR_TOKEN"
             exit 1
           fi
 
@@ -73,8 +72,8 @@ jobs:
             echo "use_pat=${HAS_TOKEN}"
           } >> "${GITHUB_OUTPUT}"
 
-          echo "推送到 : ${BASE}:${VERSION}"
-          echo "本次保留 : ${BASE}:${RUN_TAG}"
+          echo "push ${BASE}:${VERSION}"
+          echo "keep ${BASE}:${RUN_TAG}"
 
       - name: Login GHCR
         uses: docker/login-action@v3
@@ -98,8 +97,8 @@ jobs:
           sbom: false
           platforms: linux/amd64,linux/arm64
           build-args: |
-            SOURCE_IMAGE=${{ github.event.inputs.source_image }}
+            SOURCE_IMAGE=${{ inputs.source_image }}
           tags: |
             ${{ steps.meta.outputs.base }}:${{ steps.meta.outputs.version }}
             ${{ steps.meta.outputs.base }}:${{ steps.meta.outputs.run_tag }}
-            ${{ github.event.inputs.update_latest == 'true' && format('{0}:latest', steps.meta.outputs.base) || '' }}
+            ${{ inputs.update_latest && format('{0}:latest', steps.meta.outputs.base) || '' }}
